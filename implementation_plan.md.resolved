@@ -1,0 +1,465 @@
+# Website Analysis Scoring System - Implementation Plan
+
+## Overview
+Add comprehensive website analysis to the lead scoring system to evaluate website quality, detect custom vs 3rd-party platforms, analyze site depth, and identify technical issues.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **API Costs & Rate Limits**
+> - Most website analysis APIs have rate limits and costs
+> - We'll implement a hybrid approach: free APIs + custom analysis to minimize costs
+> - Analysis will be asynchronous and cached to avoid redundant checks
+
+> [!WARNING]
+> **Processing Time**
+> - Website analysis can take 5-30 seconds per site
+> - Will run asynchronously after initial lead capture
+> - May need queue system for batch processing
+
+## Technical Approach
+
+### API Selection Strategy
+
+#### Primary APIs (Free/Freemium)
+1. **BuiltWith API** (Free tier: 200 calls/month)
+   - Detects website platform (WordPress, Shopify, Wix, custom)
+   - Identifies technologies used
+   - Alternative: Manual detection via HTML analysis
+
+2. **Google PageSpeed Insights API** (Free)
+   - Performance scores
+   - Technical errors
+   - Mobile-friendliness
+   - Core Web Vitals
+
+3. **Custom HTTP Analysis** (Free)
+   - Direct HTTP requests to analyze:
+     - Response codes
+     - SSL certificate validation
+     - Redirect chains
+     - Meta tags and structure
+     - Page count estimation via sitemap.xml
+
+#### Fallback: Custom Detection Engine
+If API limits are reached, use custom analysis:
+- HTML parsing for platform signatures
+- Technology fingerprinting via headers/scripts
+- Sitemap parsing for page count
+- Basic link checking
+
+---
+
+## Proposed Changes
+
+### Backend Components
+
+#### New Service: `backend/api/src/services/websiteAnalyzer.js`
+
+**Purpose**: Core website analysis service
+
+**Key Functions**:
+```javascript
+class WebsiteAnalyzer {
+  // Main analysis orchestrator
+  async analyzeWebsite(url, options = {})
+  
+  // Platform detection
+  async detectPlatform(url)
+  
+  // Technical health check
+  async checkTechnicalHealth(url)
+  
+  // Site depth analysis
+  async analyzeSiteDepth(url)
+  
+  // Performance scoring
+  async getPerformanceScore(url)
+}
+```
+
+**Analysis Output**:
+```javascript
+{
+  url: "https://example.com",
+  platform: {
+    type: "custom" | "wordpress" | "shopify" | "wix" | "squarespace" | "unknown",
+    confidence: 0.95,
+    technologies: ["React", "Node.js", "Cloudflare"],
+    cms: "WordPress 6.4"
+  },
+  technical: {
+    ssl_valid: true,
+    ssl_expiry: "2025-12-31",
+    response_time_ms: 450,
+    status_code: 200,
+    redirects: 0,
+    broken_links_count: 2,
+    mobile_friendly: true
+  },
+  depth: {
+    estimated_pages: 45,
+    sitemap_found: true,
+    sitemap_pages: 42,
+    has_blog: true,
+    has_contact_page: true,
+    has_about_page: true
+  },
+  performance: {
+    lighthouse_score: 85,
+    first_contentful_paint: 1.2,
+    speed_index: 2.1,
+    largest_contentful_paint: 2.5
+  },
+  errors: [
+    { type: "broken_link", url: "/old-page", severity: "low" },
+    { type: "missing_meta", page: "/", severity: "medium" }
+  ],
+  analyzed_at: "2026-02-07T13:18:00Z"
+}
+```
+
+---
+
+#### New Scorer: `backend/api/src/scorers/WebsiteQualityScorer.js`
+
+**Purpose**: Score businesses based on website quality
+
+**Scoring Logic** (0-100):
+
+1. **Platform Type** (30 points)
+   - Custom/Professional: 30 pts
+   - WordPress (custom theme): 25 pts
+   - Shopify/E-commerce: 20 pts
+   - WordPress (template): 15 pts
+   - Wix/Squarespace: 10 pts
+   - No website: 0 pts
+
+2. **Site Depth** (25 points)
+   - 50+ pages: 25 pts
+   - 20-49 pages: 20 pts
+   - 10-19 pages: 15 pts
+   - 5-9 pages: 10 pts
+   - 1-4 pages: 5 pts
+
+3. **Technical Health** (25 points)
+   - SSL valid: 10 pts
+   - Fast response (<500ms): 5 pts
+   - No broken links: 5 pts
+   - Mobile-friendly: 5 pts
+
+4. **Performance** (20 points)
+   - Lighthouse 90+: 20 pts
+   - Lighthouse 70-89: 15 pts
+   - Lighthouse 50-69: 10 pts
+   - Lighthouse <50: 5 pts
+
+**Weight**: 15% of final score (adjust existing weights proportionally)
+
+---
+
+#### Database Schema Updates
+
+##### Business Model Enhancement
+```javascript
+// Add to backend/api/src/models/Business.js
+website_analysis: {
+  platform: {
+    type: String,
+    enum: ['custom', 'wordpress', 'shopify', 'wix', 'squarespace', 'unknown']
+  },
+  platform_confidence: Number,
+  technologies: [String],
+  estimated_pages: Number,
+  ssl_valid: Boolean,
+  performance_score: Number,
+  technical_health_score: Number,
+  has_blog: Boolean,
+  has_contact_page: Boolean,
+  mobile_friendly: Boolean,
+  errors_count: Number,
+  analyzed_at: Date,
+  analysis_version: String // Track analysis algorithm version
+}
+```
+
+##### Settings Model Enhancement
+```javascript
+// Add to backend/api/src/models/Settings.js
+website_analysis_config: {
+  enabled: { type: Boolean, default: true },
+  api_provider: {
+    type: String,
+    enum: ['builtwith', 'custom', 'hybrid'],
+    default: 'hybrid'
+  },
+  builtwith_api_key: String,
+  pagespeed_api_key: String,
+  max_concurrent_analyses: { type: Number, default: 3 },
+  cache_duration_days: { type: Number, default: 30 },
+  analyze_on_scrape: { type: Boolean, default: true }
+}
+```
+
+---
+
+#### New API Routes
+
+##### `POST /admin/analyze-websites`
+Trigger website analysis for businesses
+
+**Request**:
+```javascript
+{
+  limit: 50,
+  force: false, // Re-analyze even if already analyzed
+  filter: {
+    has_website: true,
+    not_analyzed: true
+  }
+}
+```
+
+**Response**:
+```javascript
+{
+  success: true,
+  analyzed: 45,
+  failed: 5,
+  skipped: 0,
+  results: {
+    custom_sites: 20,
+    wordpress_sites: 15,
+    shopify_sites: 5,
+    wix_sites: 3,
+    unknown: 2
+  }
+}
+```
+
+##### `GET /admin/businesses/:id/website-analysis`
+Get detailed website analysis for a specific business
+
+---
+
+### Platform Detection Strategy
+
+#### Custom Detection Engine (Fallback/Primary)
+
+**WordPress Detection**:
+- Check for `/wp-content/`, `/wp-includes/` in HTML
+- Look for `wp-json` API endpoint
+- Meta generator tag: `<meta name="generator" content="WordPress">`
+- Common WP plugins in source
+
+**Shopify Detection**:
+- Check for `cdn.shopify.com` in resources
+- Shopify-specific meta tags
+- `.myshopify.com` domain patterns
+- Shopify analytics scripts
+
+**Wix Detection**:
+- `static.wixstatic.com` resources
+- Wix-specific meta tags
+- `.wixsite.com` domain patterns
+
+**Squarespace Detection**:
+- `static.squarespace.com` resources
+- Squarespace version meta tags
+
+**Custom Site Indicators**:
+- No platform signatures found
+- Modern frameworks (React, Vue, Angular) detected
+- Custom domain with professional hosting
+- Unique technology stack
+
+---
+
+### Integration Points
+
+#### 1. Automatic Analysis Trigger
+```javascript
+// In backend/api/src/services/processor.js
+// After business is saved/updated
+if (business.website && !business.website_analysis) {
+  // Queue for analysis
+  websiteAnalysisQueue.add({
+    business_id: business._id,
+    url: business.website
+  });
+}
+```
+
+#### 2. Filtration Integration
+```javascript
+// In backend/api/src/filters/index.js
+// Register new scorer
+filterEngine.registerScorer(new WebsiteQualityScorer({
+  enabled: config.scorers?.websiteQuality?.enabled !== false,
+  weight: config.scorers?.websiteQuality?.weight || 0.15
+}));
+```
+
+#### 3. Adjust Existing Weights
+```javascript
+// Rebalance to total 100%
+PainScorer: 30% (was 35%)
+MoneyScorer: 25% (was 30%)
+TimingScorer: 20% (was 25%)
+ReachabilityScorer: 10% (was 10%)
+WebsiteQualityScorer: 15% (NEW)
+```
+
+---
+
+### Frontend Enhancements
+
+#### Settings Page Updates
+Add Website Analysis configuration section:
+- Enable/disable analysis
+- API provider selection
+- API key configuration
+- Analysis trigger settings
+
+#### Data Page Enhancements
+Display website analysis results:
+- Platform badge (Custom, WordPress, Shopify, etc.)
+- Technical health indicator
+- Performance score
+- Page count
+- Expandable details panel
+
+#### Dashboard Stats
+Add website analysis metrics:
+- Platform distribution chart
+- Average performance scores
+- Technical health overview
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+1. **Unit Tests**
+   - Platform detection accuracy
+   - Scoring algorithm correctness
+   - Error handling for invalid URLs
+
+2. **Integration Tests**
+   - Full analysis pipeline
+   - Database updates
+   - Queue processing
+
+### Manual Verification
+
+1. **Sample Analysis**
+   - Test with 10 known websites
+   - Verify platform detection accuracy
+   - Check scoring consistency
+
+2. **Performance Testing**
+   - Measure analysis time per website
+   - Test concurrent analysis limits
+   - Verify queue handling
+
+3. **UI Verification**
+   - Check website analysis display in Data page
+   - Verify settings configuration
+   - Test manual re-analysis trigger
+
+---
+
+## Implementation Phases
+
+### Phase 1: Core Analysis Engine (Priority: High)
+- [ ] Create `WebsiteAnalyzer` service
+- [ ] Implement custom platform detection
+- [ ] Add basic technical health checks
+- [ ] Implement sitemap parsing for page count
+
+### Phase 2: Scoring Integration (Priority: High)
+- [ ] Create `WebsiteQualityScorer`
+- [ ] Update Business model schema
+- [ ] Integrate with filter engine
+- [ ] Adjust existing scorer weights
+
+### Phase 3: API Integration (Priority: Medium)
+- [ ] Add Google PageSpeed Insights integration
+- [ ] Add BuiltWith API (optional)
+- [ ] Implement API key management in Settings
+- [ ] Add rate limiting and caching
+
+### Phase 4: Queue & Automation (Priority: Medium)
+- [ ] Implement analysis queue system
+- [ ] Auto-trigger on new businesses
+- [ ] Batch analysis endpoint
+- [ ] Re-analysis scheduling
+
+### Phase 5: Frontend Display (Priority: Medium)
+- [ ] Add website analysis section to Data page
+- [ ] Create platform badges/icons
+- [ ] Add technical health indicators
+- [ ] Settings page configuration UI
+
+### Phase 6: Advanced Features (Priority: Low)
+- [ ] Broken link detection
+- [ ] Content quality analysis
+- [ ] SEO scoring
+- [ ] Competitor comparison
+
+---
+
+## Cost & Performance Considerations
+
+### API Costs (Monthly Estimates)
+- **BuiltWith**: Free tier (200 calls) or $295/mo for 10k calls
+- **PageSpeed Insights**: Free (25k calls/day)
+- **Custom Analysis**: Free (server resources only)
+
+**Recommendation**: Start with hybrid approach (custom + PageSpeed), add BuiltWith only if needed.
+
+### Performance Impact
+- Analysis time: 5-30 seconds per website
+- Queue processing: 3 concurrent analyses (configurable)
+- Database storage: ~2KB per business for analysis data
+- Cache duration: 30 days (configurable)
+
+### Scalability
+- For 1000 businesses: ~30-60 minutes initial analysis
+- Incremental: Only new/updated businesses analyzed
+- Re-analysis: Configurable schedule (e.g., monthly)
+
+---
+
+## Risk Mitigation
+
+1. **API Rate Limits**
+   - Implement robust caching
+   - Fallback to custom analysis
+   - Queue-based processing
+
+2. **Analysis Failures**
+   - Graceful error handling
+   - Retry logic with exponential backoff
+   - Mark failed analyses for manual review
+
+3. **Invalid/Unreachable Websites**
+   - Timeout handling (10s max)
+   - Skip score if analysis fails
+   - Log failures for debugging
+
+4. **Performance Impact**
+   - Async processing (non-blocking)
+   - Configurable concurrency limits
+   - Optional: disable auto-analysis
+
+---
+
+## Success Metrics
+
+- **Accuracy**: 90%+ platform detection accuracy
+- **Coverage**: 80%+ of businesses with websites analyzed
+- **Performance**: <15s average analysis time
+- **Reliability**: <5% analysis failure rate
+- **Impact**: Measurable improvement in lead prioritization accuracy

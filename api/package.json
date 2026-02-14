@@ -1,0 +1,31 @@
+{
+    "name": "google-maps-scraper-backend",
+    "version": "1.0.0",
+    "description": "Node.js backend for job-based Google Maps scraper",
+    "main": "src/index.js",
+    "scripts": {
+        "start": "node src/index.js",
+        "dev": "nodemon src/index.js"
+    },
+    "dependencies": {
+        "@react-pdf/renderer": "^4.3.2",
+        "axios": "^1.13.4",
+        "bcryptjs": "^3.0.3",
+        "bullmq": "^5.67.3",
+        "cloudinary": "^2.0.0",
+        "cors": "^2.8.5",
+        "dockerode": "^4.0.2",
+        "dotenv": "^16.3.1",
+        "express": "^4.18.2",
+        "ioredis": "^5.9.2",
+        "jsonwebtoken": "^9.0.3",
+        "mongoose": "^8.0.3",
+        "node-cron": "^3.0.3",
+        "react": "^19.2.4",
+        "uuid": "^9.0.1",
+        "winston": "^3.11.0"
+    },
+    "devDependencies": {
+        "nodemon": "^3.0.2"
+    }
+}
