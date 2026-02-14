@@ -197,7 +197,20 @@ docker-compose restart backend
 1. Configure your cloud services
 2. Test with sample queries
 3. Enable scheduler (optional)
-4. Deploy to production!
+4. **Deploy to production!** → See [DEPLOYMENT.md](DEPLOYMENT.md)
+
+---
+
+## 🚀 Production Deployment
+
+Ready to deploy to your Contabo VPS? Check out the complete deployment guide:
+
+**[📖 DEPLOYMENT.md](DEPLOYMENT.md)** - Complete production deployment guide including:
+- Initial VPS setup
+- GitHub Actions CI/CD pipeline
+- Nginx configuration for `api.leads.w3spiders.com`
+- Monitoring and troubleshooting
+- Rollback procedures
 
 ---
 

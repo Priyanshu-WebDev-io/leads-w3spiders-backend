@@ -1,0 +1,55 @@
+networks:
+  crm_network:
+    driver: bridge
+
+services:
+  # ==========================================
+  # CRM BACKEND SERVICE
+  # ==========================================
+  crm-backend:
+    build: ./api
+    container_name: crm_backend
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - scraper_data:/app/scraper_data
+    env_file:
+      - ./api/.env.production
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=460
+      - DATA_DIR=/app/scraper_data
+      - SCRAPER_VOLUME_NAME=scraper_data
+    networks:
+      - crm_network
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================
+  # SCRAPER IMAGE BUILDER
+  # ==========================================
+  scraper-builder:
+    build: ./google-maps-scraper
+    image: scraper-image:latest
+    container_name: scraper-image-builder
+    entrypoint: ["/bin/true"]
+    profiles: ["build-only"]
+
+volumes:
+  scraper_data:
+    name: scraper_data

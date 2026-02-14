@@ -78,3 +78,11 @@ ecosystem.config.js
 *.pem
 *.key
 *.cert
+
+# Production environment
+.env.production
+.env.prod
+
+# Deployment logs
+deploy.log
+deployment.log

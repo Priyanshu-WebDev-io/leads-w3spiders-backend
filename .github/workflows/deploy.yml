@@ -1,0 +1,109 @@
+name: Deploy to Contabo VPS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy CRM Backend
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Create .env.production on VPS
+        run: |
+          ssh ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }} << 'EOF'
+            mkdir -p ~/w3spiders-crm/backend/api
+            cat > ~/w3spiders-crm/backend/api/.env.production << 'ENVEOF'
+          NODE_ENV=production
+          PORT=3000
+          MONGODB_URI=${{ secrets.MONGODB_URI }}
+          CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY=${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET=${{ secrets.CLOUDINARY_API_SECRET }}
+          SCRAPER_IMAGE=scraper-image:latest
+          MAX_RESULTS=70
+          CLEANUP_TEMP=true
+          DATA_DIR=/app/scraper_data
+          SCRAPER_VOLUME_NAME=scraper_data
+          ENABLE_SCHEDULER=false
+          SCHEDULE_CRON=0 0 * * *
+          SCHEDULED_QUERIES=restaurants in Jaipur,hotels in Jaipur
+          NODE_OPTIONS=--max-old-space-size=460
+          GOOGLE_PAGESPEED_API_KEY=${{ secrets.GOOGLE_PAGESPEED_API_KEY }}
+          ENVEOF
+          EOF
+      
+      - name: Deploy to VPS
+        run: |
+          ssh ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }} << 'EOF'
+            set -e
+            
+            # Navigate to project directory
+            cd ~/w3spiders-crm/backend || exit 1
+            
+            # Pull latest code
+            git pull origin main
+            
+            # Build scraper image first
+            echo "Building scraper image..."
+            docker-compose -f docker-compose.production.yml build scraper-builder
+            
+            # Build and restart backend
+            echo "Building and restarting CRM backend..."
+            docker-compose -f docker-compose.production.yml up -d --build crm-backend
+            
+            # Wait for health check
+            echo "Waiting for backend to be healthy..."
+            sleep 10
+            
+            # Check if backend is running
+            if docker ps | grep -q crm_backend; then
+              echo "✅ CRM Backend is running"
+            else
+              echo "❌ CRM Backend failed to start"
+              docker logs crm_backend --tail 50
+              exit 1
+            fi
+            
+            # Clean up old images
+            echo "Cleaning up old Docker images..."
+            docker image prune -f
+            
+            echo "🚀 Deployment completed successfully!"
+          EOF
+      
+      - name: Health Check
+        run: |
+          sleep 5
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://api.leads.w3spiders.com/health || echo "000")
+          if [ "$response" = "200" ]; then
+            echo "✅ Health check passed"
+          else
+            echo "⚠️ Health check returned status: $response"
+            echo "Backend may still be starting up. Check logs on VPS."
+          fi
+      
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ ${{ job.status }} == 'success' ]; then
+            echo "✅ Deployment successful!"
+          else
+            echo "❌ Deployment failed. Check logs above."
+          fi
