@@ -127,7 +127,7 @@ class DeduplicatorService {
 
             // Fix empty status field (scraper bug)
             if (!existing.status || existing.status === '') {
-                existing.status = 'unfiltered';
+                existing.status = 'new';
                 updated = true;
             }
 
@@ -174,7 +174,7 @@ class DeduplicatorService {
         } else {
             // INSERT - Set status explicitly to override any empty value from scraper
             if (!normalized.status || normalized.status === '') {
-                normalized.status = 'unfiltered';
+                normalized.status = 'new';
             }
             normalized.sources = [{ type: sourceType }];
             if (rawId) {

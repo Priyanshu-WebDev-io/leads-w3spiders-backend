@@ -253,11 +253,19 @@ const getBusinesses = async (req, res) => {
         const filter = {};
 
         // Role-Based Access Control
-        // If not Super Admin, force filter by current user
+        // REVISED (Claim Workflow):
+        // 1. 'new' status -> Publicly visible (Company Data).
+        // 2. Other statuses -> Private to Owner (My Data).
+
         if (req.user.role && req.user.role.name !== 'Super Admin') {
-            filter.createdBy = req.user._id;
-        } else if (ownerId) {
-            // Super Admin can choose to view a specific user's data
+            // If checking 'new', allow global access (unless specific owner requested below)
+            // If checking anything else (or no status), force own data
+            if (req.query.status !== 'new') {
+                filter.createdBy = req.user._id;
+            }
+        }
+
+        if (ownerId) {
             filter.createdBy = ownerId;
         }
 
@@ -357,7 +365,8 @@ const updateBusiness = async (req, res) => {
         const update = {};
 
         if (status) {
-            if (!['new', 'interested', 'converted', 'closed'].includes(status)) {
+            const allowedStatuses = ['new', 'interested', 'converted', 'closed', 'rejected'];
+            if (!allowedStatuses.includes(status)) {
                 return res.status(400).json({ success: false, error: 'Invalid status' });
             }
             update.status = status;
@@ -367,15 +376,38 @@ const updateBusiness = async (req, res) => {
             update.remarks = remarks;
         }
 
-        const business = await Business.findByIdAndUpdate(
-            req.params.id,
-            update,
-            { new: true }
-        );
+        const business = await Business.findById(req.params.id);
 
         if (!business) {
             return res.status(404).json({ success: false, error: 'Business not found' });
         }
+
+        // Check Write Permissions
+        // Super Admin can edit anything.
+        // Users can edit their own.
+        // Users can also edit 'new' leads (Claiming them).
+
+        const isSuperAdmin = req.user.role.name === 'Super Admin';
+        const isOwner = business.createdBy && business.createdBy.toString() === req.user._id.toString();
+        const isClaimable = business.status === 'new';
+
+        if (!isSuperAdmin && !isOwner && !isClaimable) {
+            return res.status(403).json({ success: false, error: 'Not authorized to update this business' });
+        }
+
+        // Auto-Claim Logic: If taking a 'new' lead, assign to self
+        if (!isSuperAdmin && !isOwner && isClaimable) {
+            // Only claim if status is actually changing from 'new'
+            if (update.status && update.status !== 'new') {
+                business.createdBy = req.user._id;
+            }
+        }
+
+        // Apply updates
+        if (update.status) business.status = update.status;
+        if (update.remarks) business.remarks = update.remarks;
+
+        await business.save();
 
         res.json({ success: true, business });
     } catch (error) {

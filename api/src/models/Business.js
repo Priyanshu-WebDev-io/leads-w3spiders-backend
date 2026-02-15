@@ -81,7 +81,7 @@ const businessSchema = new mongoose.Schema({
     status: {
         type: String,
         enum: ['unfiltered', 'new', 'interested', 'converted', 'closed', 'rejected'],
-        default: 'unfiltered',
+        default: 'new',
         index: true
     },
 
